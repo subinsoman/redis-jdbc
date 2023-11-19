@@ -3,59 +3,38 @@
  */
 package org.apache.redis.jdbc;
 
-import java.sql.Connection;
-import java.sql.Driver;
-import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
-import java.util.Properties;
-import java.util.logging.Logger;
 
 /**
  * 
  */
-public class RedisDriver implements Driver{
+public class RedisDriver extends NonRegisteringDriver implements java.sql.Driver{
 
-	@Override
-	public Connection connect(String url, Properties info) throws SQLException {
-		// TODO Auto-generated method stub
-		return null;
-	}
+	// ~ Static fields/initializers
+		// ---------------------------------------------
 
-	@Override
-	public boolean acceptsURL(String url) throws SQLException {
-		// TODO Auto-generated method stub
-		return false;
-	}
+		//
+		// Register ourselves with the DriverManager
+		//
+		static {
+			try {
+				java.sql.DriverManager.registerDriver(new RedisDriver());
+			} catch (SQLException E) {
+				throw new RuntimeException("Can't register driver!");
+			}
+		}
 
-	@Override
-	public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
-		// TODO Auto-generated method stub
-		return null;
-	}
+		// ~ Constructors
+		// -----------------------------------------------------------
 
-	@Override
-	public int getMajorVersion() {
-		// TODO Auto-generated method stub
-		return 0;
-	}
-
-	@Override
-	public int getMinorVersion() {
-		// TODO Auto-generated method stub
-		return 0;
-	}
-
-	@Override
-	public boolean jdbcCompliant() {
-		// TODO Auto-generated method stub
-		return false;
-	}
-
-	@Override
-	public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-		// TODO Auto-generated method stub
-		return null;
-	}
+		/**
+		 * Construct a new driver and register it with DriverManager
+		 * 
+		 * @throws SQLException
+		 *             if a database error occurs.
+		 */
+		public RedisDriver() throws SQLException {
+			// Required for Class.forName().newInstance()
+		}
 
 }
