@@ -1,85 +1,4 @@
-{
-  "version": "1.0",
-  "defaultSchema": "foodmart",
-  "schemas": [
-    {
-      "type": "custom",
-      "name": "foodmart",
-      "factory": "org.apache.calcite.adapter.redis.RedisSchemaFactory",
-      "operand": {
-        "host": "localhost",
-        "port": 6379,
-        "database": 0,
-        "password": ""
-      },
-      "tables": [
-        {
-          "name": "json_01",
-          "factory": "org.apache.calcite.adapter.redis.RedisTableFactory",
-          "operand": {
-            "dataFormat": "json",
-            "fields": [
-              {
-                "name": "DEPTNO",
-                "type": "varchar",
-                "mapping": "DEPTNO"
-              },
-              {
-                "name": "NAME",
-                "type": "varchar",
-                "mapping": "NAME"
-              }
-            ]
-          }
-        },
-        {
-          "name": "raw_01",
-          "factory": "org.apache.calcite.adapter.redis.RedisTableFactory",
-          "operand": {
-            "dataFormat": "raw",
-            "fields": [
-              {
-                "name": "id",
-                "type": "varchar",
-                "mapping": "id"
-              },
-              {
-                "name": "city",
-                "type": "varchar",
-                "mapping": "city"
-              },
-              {
-                "name": "pop",
-                "type": "int",
-                "mapping": "pop"
-              }
-            ]
-          }
-        },
-        {
-          "name": "csv_01",
-          "factory": "org.apache.calcite.adapter.redis.RedisTableFactory",
-          "operand": {
-            "dataFormat": "csv",
-            "keyDelimiter": ":",
-            "fields": [
-              {
-                "name": "EMPNO",
-                "type": "varchar",
-                "mapping": 0
-              },
-              {
-                "name": "NAME",
-                "type": "varchar",
-                "mapping": 1
-              }
-            ]
-          }
-        }
-      ]
-    }
-  ]
-}# README
+# README
 
 It is a JDBC Driver for Redis  that supports sql
 
@@ -124,6 +43,46 @@ ResultSet rs = statement.executeQuery("get a");
 while (rs.next()) {
   String string = rs.getString(0);
   System.out.println(string);
+}
+```
+
+###model schema example
+
+```{
+  "version": "1.0",
+  "defaultSchema": "foodmart",
+  "schemas": [
+    {
+      "type": "custom",
+      "name": "foodmart",
+      "operand": {
+        "host": "localhost",
+        "port": 6379,
+        "database": 0,
+        "password": ""
+      },
+      "tables": [
+        {
+          "name": "json_01",
+          "operand": {
+            "dataFormat": "json",
+            "fields": [
+              {
+                "name": "DEPTNO",
+                "type": "varchar",
+                "mapping": "DEPTNO"
+              },
+              {
+                "name": "NAME",
+                "type": "varchar",
+                "mapping": "NAME"
+              }
+            ]
+          }
+       }
+      ]
+    }
+  ]
 }
 ```
 
