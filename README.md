@@ -1,10 +1,10 @@
 # README
 
-It is a JDBC Driver for Redis which is based on Jedis.
+It is a JDBC Driver for Redis  that supports sql
 
 URL: 
 
-* GitHub地址：https://github.com/eacdy/redis-jdbc
+* GitHub：https://github.com/subinsoman/redis-jdbc
 
 
 ## Features
@@ -94,3 +94,4 @@ Not Support yet.
 
 ## Thanks
 
+PLEASE CONTRIBUTE TO SUPPORT
