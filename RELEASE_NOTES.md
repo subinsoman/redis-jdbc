@@ -19,6 +19,14 @@
   - Updated test to expect correct exception type (JedisDataException) for authentication failures
   - Improved test cases for both authenticated and non-authenticated connections
   - Enhanced error message clarity for authentication-related failures
+- Fixed cluster mode connection issues:
+  - Corrected exception handling for cluster node authentication
+  - Improved cluster node connection retry logic
+  - Enhanced error reporting for cluster configuration issues
+- Fixed sentinel mode connection handling:
+  - Corrected sentinel authentication mechanism
+  - Fixed master discovery process in sentinel mode
+  - Improved failover handling and connection recovery
 
 ## Version 1.0.0 (2024-03-21)
 
