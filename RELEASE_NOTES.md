@@ -1,5 +1,17 @@
 # Release Notes
 
+## Version 1.0.1 (2024-03-21)
+
+### Improvements
+- Enhanced Redis deployment configuration documentation:
+  - Added detailed Standalone mode setup guide
+  - Added comprehensive Cluster mode configuration
+  - Added complete Sentinel mode setup instructions
+- Improved connection properties documentation with detailed reference table
+- Added security best practices and recommendations
+- Enhanced SQL examples with transaction handling
+- Updated README with status badges and version information
+
 ## Version 1.0.0 (2024-03-21)
 
 ### Features

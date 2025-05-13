@@ -1,6 +1,6 @@
 # Redis JDBC Driver
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/subinsoman/redis-jdbc/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/subinsoman/redis-jdbc/releases/tag/v1.0.1)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Java Version](https://img.shields.io/badge/java-%3E%3D8-orange.svg)](https://www.oracle.com/java/technologies/javase/javase-jdk8-downloads.html)
 
@@ -65,7 +65,7 @@ mvn clean package
 <dependency>
     <groupId>org.apache.redis</groupId>
     <artifactId>redis-jdbc</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
