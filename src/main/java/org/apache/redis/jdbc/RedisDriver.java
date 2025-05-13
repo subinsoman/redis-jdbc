@@ -23,6 +23,8 @@ import java.util.logging.Logger;
 
 public class RedisDriver implements Driver {
     private static final String URL_PREFIX = "jdbc:redis://";
+    private static final String CLUSTER_PREFIX = "jdbc:redis:cluster://";
+    private static final String SENTINEL_PREFIX = "jdbc:redis:sentinel://";
     
     static {
         try {
@@ -42,12 +44,30 @@ public class RedisDriver implements Driver {
 
     @Override
     public boolean acceptsURL(String url) throws SQLException {
-        return url != null && url.startsWith(URL_PREFIX);
+        return url != null && (
+            url.startsWith(URL_PREFIX) ||
+            url.startsWith(CLUSTER_PREFIX) ||
+            url.startsWith(SENTINEL_PREFIX)
+        );
     }
 
     @Override
     public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
-        return new DriverPropertyInfo[0];
+        DriverPropertyInfo[] driverProps = new DriverPropertyInfo[3];
+        
+        driverProps[0] = new DriverPropertyInfo("password", info.getProperty("password"));
+        driverProps[0].description = "Redis password for authentication";
+        driverProps[0].required = false;
+        
+        driverProps[1] = new DriverPropertyInfo("masterName", info.getProperty("masterName"));
+        driverProps[1].description = "Master name for Redis Sentinel";
+        driverProps[1].required = false;
+        
+        driverProps[2] = new DriverPropertyInfo("maxRetries", info.getProperty("maxRetries", "3"));
+        driverProps[2].description = "Maximum number of retries for cluster/sentinel operations";
+        driverProps[2].required = false;
+        
+        return driverProps;
     }
 
     @Override

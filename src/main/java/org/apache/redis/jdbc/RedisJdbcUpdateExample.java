@@ -1,4 +1,4 @@
-package com.example.jdbc;
+package org.apache.redis.jdbc;
 
 import java.sql.*;
 
@@ -8,7 +8,7 @@ public class RedisJdbcUpdateExample {
         
         try {
             // Register Redis JDBC driver
-            Class.forName("com.example.jdbc.RedisDriver");
+            Class.forName("org.apache.redis.jdbc.RedisDriver");
             
             try (Connection conn = DriverManager.getConnection(url, new java.util.Properties())) {
                 // Create a table

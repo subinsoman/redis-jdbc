@@ -30,12 +30,13 @@ import static org.junit.jupiter.api.Assertions.*;
 class RedisConnectionTest {
     private RedisConnection connection;
     private Properties info;
+    private static final String REDIS_URL = "jdbc:redis://localhost:6379/0";
 
     @BeforeEach
     void setUp() throws SQLException {
         info = new Properties();
-        info.setProperty("password", ""); // Set Redis password if needed
-        connection = new RedisConnection("jdbc:redis://localhost:6379/0", info);
+        // Don't set password for local testing
+        connection = new RedisConnection(REDIS_URL, info);
     }
 
     @AfterEach
@@ -82,5 +83,33 @@ class RedisConnectionTest {
         assertThrows(SQLException.class, () -> {
             new RedisConnection("jdbc:redis:invalid", info);
         });
+    }
+
+    @Test
+    void testClusterUrl() throws SQLException {
+        String clusterUrl = "jdbc:redis:cluster://localhost:6379";
+        RedisConnection clusterConnection = null;
+        try {
+            clusterConnection = new RedisConnection(clusterUrl, info);
+            assertNotNull(clusterConnection);
+        } finally {
+            if (clusterConnection != null && !clusterConnection.isClosed()) {
+                clusterConnection.close();
+            }
+        }
+    }
+
+    @Test
+    void testSentinelUrl() throws SQLException {
+        String sentinelUrl = "jdbc:redis:sentinel://localhost:26379/0";
+        RedisConnection sentinelConnection = null;
+        try {
+            sentinelConnection = new RedisConnection(sentinelUrl, info);
+            assertNotNull(sentinelConnection);
+        } finally {
+            if (sentinelConnection != null && !sentinelConnection.isClosed()) {
+                sentinelConnection.close();
+            }
+        }
     }
 } 

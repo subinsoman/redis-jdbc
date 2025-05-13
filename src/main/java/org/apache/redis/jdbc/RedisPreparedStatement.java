@@ -29,6 +29,7 @@ public class RedisPreparedStatement extends RedisStatement implements PreparedSt
     private final String sql;
     private final List<String> parameters;
     private final Map<Integer, String> parameterValues;
+    private boolean isClosed = false;
 
     public RedisPreparedStatement(RedisConnection connection, String sql) {
         super(connection);
@@ -49,46 +50,108 @@ public class RedisPreparedStatement extends RedisStatement implements PreparedSt
         }
     }
 
+    private void checkParameterIndex(int parameterIndex) throws SQLException {
+        if (parameterIndex < 1 || parameterIndex > parameters.size()) {
+            throw new SQLException("Invalid parameter index: " + parameterIndex + ". Valid range is 1 to " + parameters.size());
+        }
+    }
+
+    @Override
+    public void setNull(int parameterIndex, int sqlType) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        parameterValues.put(parameterIndex, "NULL");
+    }
+
+    @Override
+    public void setBoolean(int parameterIndex, boolean x) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        parameterValues.put(parameterIndex, String.valueOf(x));
+    }
+
+    @Override
+    public void setString(int parameterIndex, String x) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        parameterValues.put(parameterIndex, x == null ? "NULL" : "'" + x.replace("'", "''") + "'");
+    }
+
+    @Override
+    public void setInt(int parameterIndex, int x) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        parameterValues.put(parameterIndex, String.valueOf(x));
+    }
+
+    @Override
+    public void setLong(int parameterIndex, long x) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        parameterValues.put(parameterIndex, String.valueOf(x));
+    }
+
+    @Override
+    public void setDouble(int parameterIndex, double x) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        parameterValues.put(parameterIndex, String.valueOf(x));
+    }
+
+    @Override
+    public void setObject(int parameterIndex, Object x) throws SQLException {
+        checkClosed();
+        checkParameterIndex(parameterIndex);
+        if (x == null) {
+            setNull(parameterIndex, Types.NULL);
+        } else if (x instanceof String) {
+            setString(parameterIndex, (String) x);
+        } else if (x instanceof Integer) {
+            setInt(parameterIndex, (Integer) x);
+        } else if (x instanceof Long) {
+            setLong(parameterIndex, (Long) x);
+        } else if (x instanceof Double) {
+            setDouble(parameterIndex, (Double) x);
+        } else if (x instanceof Boolean) {
+            setBoolean(parameterIndex, (Boolean) x);
+        } else {
+            throw new SQLException("Unsupported parameter type: " + x.getClass());
+        }
+    }
+
+    @Override
+    public void clearParameters() throws SQLException {
+        checkClosed();
+        parameterValues.clear();
+    }
+
     @Override
     public ResultSet executeQuery() throws SQLException {
+        checkClosed();
         String resolvedSql = createExecutableSql();
         return super.executeQuery(resolvedSql);
     }
 
     @Override
     public int executeUpdate() throws SQLException {
+        checkClosed();
         String resolvedSql = createExecutableSql();
         return super.executeUpdate(resolvedSql);
     }
 
     @Override
-    public void setNull(int parameterIndex, int sqlType) throws SQLException {
-        parameterValues.put(parameterIndex, "NULL");
+    public boolean execute() throws SQLException {
+        checkClosed();
+        String resolvedSql = createExecutableSql();
+        return super.execute(resolvedSql);
     }
 
     @Override
-    public void setBoolean(int parameterIndex, boolean x) throws SQLException {
-        parameterValues.put(parameterIndex, String.valueOf(x));
-    }
-
-    @Override
-    public void setString(int parameterIndex, String x) throws SQLException {
-        parameterValues.put(parameterIndex, "'" + x.replace("'", "''") + "'");
-    }
-
-    @Override
-    public void setInt(int parameterIndex, int x) throws SQLException {
-        parameterValues.put(parameterIndex, String.valueOf(x));
-    }
-
-    @Override
-    public void setLong(int parameterIndex, long x) throws SQLException {
-        parameterValues.put(parameterIndex, String.valueOf(x));
-    }
-
-    @Override
-    public void setDouble(int parameterIndex, double x) throws SQLException {
-        parameterValues.put(parameterIndex, String.valueOf(x));
+    public void close() throws SQLException {
+        if (!isClosed) {
+            clearParameters();
+            super.close();
+        }
     }
 
     private String createExecutableSql() throws SQLException {
@@ -101,17 +164,6 @@ public class RedisPreparedStatement extends RedisStatement implements PreparedSt
             result = result.replaceFirst("\\?", value);
         }
         return result;
-    }
-
-    @Override
-    public void clearParameters() throws SQLException {
-        parameterValues.clear();
-    }
-
-    @Override
-    public boolean execute() throws SQLException {
-        String resolvedSql = createExecutableSql();
-        return super.execute(resolvedSql);
     }
 
     // The following methods are required by the PreparedStatement interface but not implemented for this basic example
@@ -174,25 +226,6 @@ public class RedisPreparedStatement extends RedisStatement implements PreparedSt
     @Override
     public void setObject(int parameterIndex, Object x, int targetSqlType) throws SQLException {
         throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public void setObject(int parameterIndex, Object x) throws SQLException {
-        if (x == null) {
-            setNull(parameterIndex, Types.NULL);
-        } else if (x instanceof String) {
-            setString(parameterIndex, (String) x);
-        } else if (x instanceof Integer) {
-            setInt(parameterIndex, (Integer) x);
-        } else if (x instanceof Long) {
-            setLong(parameterIndex, (Long) x);
-        } else if (x instanceof Double) {
-            setDouble(parameterIndex, (Double) x);
-        } else if (x instanceof Boolean) {
-            setBoolean(parameterIndex, (Boolean) x);
-        } else {
-            throw new SQLException("Unsupported parameter type: " + x.getClass());
-        }
     }
 
     @Override

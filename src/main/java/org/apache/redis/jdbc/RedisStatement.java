@@ -18,6 +18,7 @@
 package org.apache.redis.jdbc;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
 
 import java.sql.*;
 import java.util.*;
@@ -29,6 +30,8 @@ public class RedisStatement implements Statement {
     protected boolean isClosed = false;
     protected int maxRows = 0;
     protected int queryTimeout = 0;
+    protected ResultSet currentResultSet;
+    protected int currentUpdateCount = -1;
 
     public RedisStatement(RedisConnection connection) {
         this.connection = connection;
@@ -39,8 +42,12 @@ public class RedisStatement implements Statement {
         checkClosed();
         try (Jedis jedis = connection.getJedis()) {
             SQLCommand command = parseSQLCommand(sql);
+            if (command.type != SQLCommand.Type.SELECT) {
+                throw new SQLException("SQL command must be a SELECT statement");
+            }
             List<Map<String, String>> results = executeRedisCommand(jedis, command);
-            return new RedisResultSet(this, results);
+            currentResultSet = new RedisResultSet(this, results);
+            return currentResultSet;
         }
     }
 
@@ -49,7 +56,11 @@ public class RedisStatement implements Statement {
         checkClosed();
         try (Jedis jedis = connection.getJedis()) {
             SQLCommand command = parseSQLCommand(sql);
-            return executeRedisUpdate(jedis, command);
+            if (command.type == SQLCommand.Type.SELECT) {
+                throw new SQLException("SQL command cannot be a SELECT statement");
+            }
+            currentUpdateCount = executeRedisUpdate(jedis, command);
+            return currentUpdateCount;
         }
     }
 
@@ -66,9 +77,23 @@ public class RedisStatement implements Statement {
             return parseDelete(sql);
         } else if (sql.startsWith("update")) {
             return parseUpdate(sql);
+        } else if (sql.startsWith("drop table")) {
+            return parseDropTable(sql);
         } else {
             throw new SQLException("Unsupported SQL command: " + sql);
         }
+    }
+
+    protected SQLCommand parseDropTable(String sql) throws SQLException {
+        Pattern pattern = Pattern.compile("drop table (?:if exists )?([\\w]+)", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(sql);
+        
+        if (!matcher.find()) {
+            throw new SQLException("Invalid DROP TABLE syntax");
+        }
+
+        String tableName = matcher.group(1);
+        return new SQLCommand(SQLCommand.Type.DROP_TABLE, tableName, null);
     }
 
     protected SQLCommand parseCreateTable(String sql) throws SQLException {
@@ -130,8 +155,7 @@ public class RedisStatement implements Statement {
     }
 
     protected SQLCommand parseUpdate(String sql) throws SQLException {
-        // Pattern for both string values and numeric/parameter values
-        Pattern pattern = Pattern.compile("update ([\\w]+)\\s+set\\s+([\\w]+)\\s*=\\s*('[^']*'|\\d+|\\?)(?: where (.+))?", Pattern.CASE_INSENSITIVE);
+        Pattern pattern = Pattern.compile("update ([\\w]+)\\s+set\\s+([\\w]+)\\s*=\\s*('[^']*'|\\d+|null)(?: where (.+))?", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(sql);
         
         if (!matcher.find()) {
@@ -158,6 +182,9 @@ public class RedisStatement implements Statement {
             case CREATE_TABLE:
                 executeCreateTable(jedis, command);
                 return Collections.emptyList();
+            case DROP_TABLE:
+                executeDropTable(jedis, command);
+                return Collections.emptyList();
             default:
                 throw new SQLException("Unsupported command type for query: " + command.type);
         }
@@ -174,15 +201,72 @@ public class RedisStatement implements Statement {
             case CREATE_TABLE:
                 executeCreateTable(jedis, command);
                 return 0;
+            case DROP_TABLE:
+                executeDropTable(jedis, command);
+                return 0;
             default:
                 throw new SQLException("Unsupported command type for update: " + command.type);
         }
     }
 
     protected void executeCreateTable(Jedis jedis, SQLCommand command) throws SQLException {
-        // In Redis, we don't actually create tables, but we can store the schema
         String schemaKey = "schema:" + command.tableName;
-        jedis.set(schemaKey, command.columns);
+        String columnsKey = command.tableName + ":columns";
+        String counterKey = command.tableName + ":counter";
+        
+        // Parse column definitions
+        String[] columnDefs = command.columns.split(",");
+        Map<String, String> columnTypes = new HashMap<>();
+        String primaryKeyColumn = null;
+        boolean hasAutoIncrement = false;
+        
+        for (String columnDef : columnDefs) {
+            String[] parts = columnDef.trim().split("\\s+");
+            String columnName = parts[0].trim();
+            String columnType = parts[1].trim().toUpperCase();
+            
+            columnTypes.put(columnName, columnType);
+            
+            // Check for PRIMARY KEY and AUTO_INCREMENT
+            if (columnDef.toUpperCase().contains("PRIMARY KEY")) {
+                primaryKeyColumn = columnName;
+                if (columnDef.toUpperCase().contains("AUTO_INCREMENT")) {
+                    hasAutoIncrement = true;
+                }
+            }
+        }
+        
+        // Store schema information
+        Transaction tx = jedis.multi();
+        tx.set(schemaKey, command.columns);
+        for (Map.Entry<String, String> entry : columnTypes.entrySet()) {
+            tx.hset(columnsKey, entry.getKey(), entry.getValue());
+        }
+        if (hasAutoIncrement) {
+            tx.set(counterKey, "0");
+        }
+        tx.exec();
+    }
+
+    protected void executeDropTable(Jedis jedis, SQLCommand command) throws SQLException {
+        String schemaKey = "schema:" + command.tableName;
+        String columnsKey = command.tableName + ":columns";
+        String counterKey = command.tableName + ":counter";
+        String keysKey = command.tableName + ":keys";
+        
+        // Get all record keys before starting transaction
+        Set<String> keys = jedis.smembers(keysKey);
+        
+        // Delete all records and metadata in a single transaction
+        Transaction tx = jedis.multi();
+        for (String key : keys) {
+            tx.del(key);
+        }
+        tx.del(schemaKey);
+        tx.del(columnsKey);
+        tx.del(counterKey);
+        tx.del(keysKey);
+        tx.exec();
     }
 
     protected int executeInsert(Jedis jedis, SQLCommand command) throws SQLException {
@@ -193,14 +277,43 @@ public class RedisStatement implements Statement {
             throw new SQLException("Column count doesn't match values count");
         }
 
-        Map<String, String> hash = new HashMap<>();
-        for (int i = 0; i < columnNames.length; i++) {
-            hash.put(columnNames[i].trim(), values[i].trim().replaceAll("'", ""));
+        // Get table schema
+        String columnsKey = command.tableName + ":columns";
+        Map<String, String> columnTypes = jedis.hgetAll(columnsKey);
+        if (columnTypes.isEmpty()) {
+            throw new SQLException("Table " + command.tableName + " does not exist");
         }
 
-        String key = command.tableName + ":" + UUID.randomUUID().toString();
-        jedis.hmset(key, hash);
-        jedis.sadd(command.tableName + ":keys", key);
+        // Create record hash
+        Map<String, String> hash = new HashMap<>();
+        for (int i = 0; i < columnNames.length; i++) {
+            String columnName = columnNames[i].trim();
+            String value = values[i].trim();
+            
+            // Handle NULL values
+            if (value.equalsIgnoreCase("null")) {
+                hash.put(columnName, "__NULL__");
+                continue;
+            }
+            
+            // Remove quotes from string values
+            if (value.startsWith("'") && value.endsWith("'")) {
+                value = value.substring(1, value.length() - 1);
+            }
+            
+            hash.put(columnName, value);
+        }
+
+        // Generate record ID
+        String counterKey = command.tableName + ":counter";
+        String recordId = String.valueOf(jedis.incr(counterKey));
+        String recordKey = command.tableName + ":" + recordId;
+        
+        // Store record
+        Transaction tx = jedis.multi();
+        tx.hmset(recordKey, hash);
+        tx.sadd(command.tableName + ":keys", recordKey);
+        tx.exec();
         
         return 1;
     }
@@ -209,10 +322,46 @@ public class RedisStatement implements Statement {
         Set<String> keys = jedis.smembers(command.tableName + ":keys");
         List<Map<String, String>> results = new ArrayList<>();
         
-        for (String key : keys) {
-            Map<String, String> hash = jedis.hgetAll(key);
-            if (matchesWhereClause(hash, command.whereClause)) {
-                results.add(hash);
+        // Handle COUNT(*) functionality
+        if (command.columns.trim().toLowerCase().startsWith("count(*)")) {
+            int count = 0;
+            for (String key : keys) {
+                Map<String, String> record = jedis.hgetAll(key);
+                if (matchesWhereClause(record, command.whereClause)) {
+                    count++;
+                }
+            }
+            Map<String, String> countResult = new HashMap<>();
+            countResult.put("count", String.valueOf(count));
+            results.add(countResult);
+            return results;
+        }
+        
+        // Get column names to select
+        Set<String> selectedColumns = new HashSet<>();
+        if (command.columns.equals("*")) {
+            String columnsKey = command.tableName + ":columns";
+            selectedColumns.addAll(jedis.hkeys(columnsKey));
+        } else {
+            for (String column : command.columns.split(",")) {
+                selectedColumns.add(column.trim());
+            }
+        }
+        
+        // Sort keys to ensure consistent ordering
+        List<String> sortedKeys = new ArrayList<>(keys);
+        Collections.sort(sortedKeys);
+        
+        for (String key : sortedKeys) {
+            Map<String, String> record = jedis.hgetAll(key);
+            if (matchesWhereClause(record, command.whereClause)) {
+                // Filter columns and handle NULL values
+                Map<String, String> filteredRecord = new HashMap<>();
+                for (String column : selectedColumns) {
+                    String value = record.get(column);
+                    filteredRecord.put(column, "__NULL__".equals(value) ? null : value);
+                }
+                results.add(filteredRecord);
             }
         }
         
@@ -224,10 +373,12 @@ public class RedisStatement implements Statement {
         int deletedCount = 0;
         
         for (String key : keys) {
-            Map<String, String> hash = jedis.hgetAll(key);
-            if (matchesWhereClause(hash, command.whereClause)) {
-                jedis.del(key);
-                jedis.srem(command.tableName + ":keys", key);
+            Map<String, String> record = jedis.hgetAll(key);
+            if (matchesWhereClause(record, command.whereClause)) {
+                Transaction tx = jedis.multi();
+                tx.del(key);
+                tx.srem(command.tableName + ":keys", key);
+                tx.exec();
                 deletedCount++;
             }
         }
@@ -240,10 +391,18 @@ public class RedisStatement implements Statement {
         int updatedCount = 0;
         
         for (String key : keys) {
-            Map<String, String> hash = jedis.hgetAll(key);
-            if (matchesWhereClause(hash, command.whereClause)) {
-                hash.put(command.columns, command.values);
-                jedis.hmset(key, hash);
+            Map<String, String> record = jedis.hgetAll(key);
+            if (matchesWhereClause(record, command.whereClause)) {
+                // Handle NULL values
+                String value = command.values;
+                if (value.equalsIgnoreCase("null")) {
+                    value = "__NULL__";
+                } else if (value.startsWith("'") && value.endsWith("'")) {
+                    value = value.substring(1, value.length() - 1);
+                }
+                
+                record.put(command.columns, value);
+                jedis.hmset(key, record);
                 updatedCount++;
             }
         }
@@ -251,44 +410,71 @@ public class RedisStatement implements Statement {
         return updatedCount;
     }
 
-    protected boolean matchesWhereClause(Map<String, String> hash, String whereClause) {
+    protected boolean matchesWhereClause(Map<String, String> record, String whereClause) {
         if (whereClause == null || whereClause.trim().isEmpty()) {
             return true;
         }
         
-        // Very basic WHERE clause parsing - only handles simple equality
+        // Basic WHERE clause parsing - only handles simple equality
         String[] parts = whereClause.split("=");
         if (parts.length != 2) {
-            return true;
+            return false;
         }
         
         String column = parts[0].trim();
-        String value = parts[1].trim().replaceAll("'", "");
+        String value = parts[1].trim();
         
-        return hash.containsKey(column) && hash.get(column).equals(value);
-    }
-
-    protected void checkClosed() throws SQLException {
-        if (isClosed) {
-            throw new SQLException("Statement is closed");
+        // Remove quotes from string values
+        if (value.startsWith("'") && value.endsWith("'")) {
+            value = value.substring(1, value.length() - 1);
         }
-    }
-
-    @Override
-    public void close() throws SQLException {
-        isClosed = true;
+        
+        String recordValue = record.get(column);
+        if (recordValue == null || "__NULL__".equals(recordValue)) {
+            return value.equalsIgnoreCase("null");
+        }
+        
+        return recordValue.equals(value);
     }
 
     @Override
     public boolean execute(String sql) throws SQLException {
         checkClosed();
-        try {
-            executeQuery(sql);
-            return true;
-        } catch (SQLException e) {
-            executeUpdate(sql);
-            return false;
+        SQLCommand command = parseSQLCommand(sql);
+        
+        try (Jedis jedis = connection.getJedis()) {
+            switch (command.type) {
+                case SELECT:
+                    List<Map<String, String>> results = executeRedisCommand(jedis, command);
+                    currentResultSet = new RedisResultSet(this, results);
+                    currentUpdateCount = -1;
+                    return true;
+                case DELETE:
+                case UPDATE:
+                case INSERT:
+                    currentUpdateCount = executeRedisUpdate(jedis, command);
+                    currentResultSet = null;
+                    return false;
+                case CREATE_TABLE:
+                case DROP_TABLE:
+                    executeRedisUpdate(jedis, command);
+                    currentResultSet = null;
+                    currentUpdateCount = 0;
+                    return false;
+                default:
+                    throw new SQLException("Unsupported command type: " + command.type);
+            }
         }
+    }
+
+    @Override
+    public ResultSet getResultSet() throws SQLException {
+        return currentResultSet;
+    }
+
+    @Override
+    public int getUpdateCount() throws SQLException {
+        return currentUpdateCount;
     }
 
     // Required Statement interface methods with basic implementations
@@ -342,16 +528,6 @@ public class RedisStatement implements Statement {
     @Override
     public void setCursorName(String name) throws SQLException {
         throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public ResultSet getResultSet() throws SQLException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public int getUpdateCount() throws SQLException {
-        return -1;
     }
 
     @Override
@@ -491,6 +667,7 @@ public class RedisStatement implements Statement {
     protected static class SQLCommand {
         enum Type {
             CREATE_TABLE,
+            DROP_TABLE,
             INSERT,
             SELECT,
             DELETE,
@@ -517,6 +694,21 @@ public class RedisStatement implements Statement {
             this.columns = columns;
             this.values = values;
             this.whereClause = whereClause;
+        }
+    }
+
+    protected void checkClosed() throws SQLException {
+        if (isClosed) {
+            throw new SQLException("Statement is closed");
+        }
+    }
+
+    @Override
+    public void close() throws SQLException {
+        if (!isClosed) {
+            isClosed = true;
+            currentResultSet = null;
+            currentUpdateCount = -1;
         }
     }
 } 
