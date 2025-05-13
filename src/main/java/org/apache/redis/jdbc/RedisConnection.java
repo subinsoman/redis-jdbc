@@ -33,6 +33,7 @@ public class RedisConnection implements java.sql.Connection {
     private static final Pattern SENTINEL_URL_PATTERN = Pattern.compile("jdbc:redis:sentinel://([^/]+)(?:/([0-9]+))?");
 
     private final Jedis jedis;
+    private final JedisSentinelPool sentinelPool;
     private final boolean isCluster;
     private boolean isClosed = false;
     private boolean autoCommit = true;
@@ -41,12 +42,15 @@ public class RedisConnection implements java.sql.Connection {
         if (url.startsWith("jdbc:redis:cluster://")) {
             this.jedis = createClusterConnection(url, info);
             this.isCluster = true;
+            this.sentinelPool = null;
         } else if (url.startsWith("jdbc:redis:sentinel://")) {
-            this.jedis = createSentinelConnection(url, info);
+            this.sentinelPool = createSentinelPool(url, info);
+            this.jedis = this.sentinelPool.getResource();
             this.isCluster = false;
         } else {
             this.jedis = createStandaloneConnection(url, info);
             this.isCluster = false;
+            this.sentinelPool = null;
         }
     }
 
@@ -63,15 +67,14 @@ public class RedisConnection implements java.sql.Connection {
         int port = portStr != null ? Integer.parseInt(portStr) : 6379;
         int database = dbStr != null ? Integer.parseInt(dbStr) : 0;
 
-        Jedis jedis = new Jedis(host, port);
-        String password = info.getProperty("password");
-        if (password != null && !password.trim().isEmpty()) {
-            jedis.auth(password);
-        }
-        if (database > 0) {
-            jedis.select(database);
-        }
-        return jedis;
+        JedisPoolConfig poolConfig = createPoolConfig(info);
+        JedisPool pool = new JedisPool(poolConfig, host, port, 
+            getTimeout(info), 
+            getPassword(info), 
+            database,
+            getClientName(info));
+
+        return pool.getResource();
     }
 
     private Jedis createClusterConnection(String url, Properties info) throws SQLException {
@@ -81,41 +84,119 @@ public class RedisConnection implements java.sql.Connection {
         }
 
         String[] nodes = matcher.group(1).split(",");
-        String[] firstNode = nodes[0].split(":");
-        String host = firstNode[0];
-        int port = Integer.parseInt(firstNode[1]);
-
-        Jedis jedis = new Jedis(host, port);
-        String password = info.getProperty("password");
-        if (password != null && !password.trim().isEmpty()) {
-            jedis.auth(password);
+        Set<HostAndPort> clusterNodes = new HashSet<>();
+        
+        for (String node : nodes) {
+            String[] hostPort = node.split(":");
+            if (hostPort.length != 2) {
+                throw new SQLException("Invalid cluster node format: " + node);
+            }
+            clusterNodes.add(new HostAndPort(hostPort[0], Integer.parseInt(hostPort[1])));
         }
-        return jedis;
+
+        // Create cluster configuration
+        JedisPoolConfig poolConfig = createPoolConfig(info);
+        
+        // Create cluster connection with default configuration
+        JedisCluster cluster = new JedisCluster(clusterNodes);
+
+        // Configure cluster nodes
+        String password = getPassword(info);
+        if (password != null && !password.isEmpty()) {
+            for (HostAndPort node : clusterNodes) {
+                try (Jedis jedis = new Jedis(node)) {
+                    jedis.auth(password);
+                }
+            }
+        }
+
+        // Return the first node's connection for basic operations
+        return new Jedis(clusterNodes.iterator().next());
     }
 
-    private Jedis createSentinelConnection(String url, Properties info) throws SQLException {
+    private JedisSentinelPool createSentinelPool(String url, Properties info) throws SQLException {
         Matcher matcher = SENTINEL_URL_PATTERN.matcher(url);
         if (!matcher.matches()) {
             throw new SQLException("Invalid Redis Sentinel URL format. Expected: jdbc:redis:sentinel://host1:port1,host2:port2,.../database");
         }
 
         String[] sentinels = matcher.group(1).split(",");
-        String[] firstSentinel = sentinels[0].split(":");
-        String host = firstSentinel[0];
-        int port = Integer.parseInt(firstSentinel[1]);
+        Set<String> sentinelSet = new HashSet<>();
+        for (String sentinel : sentinels) {
+            sentinelSet.add(sentinel.trim());
+        }
 
         String dbStr = matcher.group(2);
         int database = dbStr != null ? Integer.parseInt(dbStr) : 0;
 
-        Jedis jedis = new Jedis(host, port);
-        String password = info.getProperty("password");
-        if (password != null && !password.trim().isEmpty()) {
-            jedis.auth(password);
+        String masterName = info.getProperty("masterName");
+        if (masterName == null || masterName.trim().isEmpty()) {
+            throw new SQLException("masterName is required for Sentinel mode");
         }
-        if (database > 0) {
-            jedis.select(database);
-        }
-        return jedis;
+
+        JedisPoolConfig poolConfig = createPoolConfig(info);
+        
+        return new JedisSentinelPool(
+            masterName,
+            sentinelSet,
+            poolConfig,
+            getTimeout(info),
+            getSentinelTimeout(info),
+            getPassword(info),
+            database
+        );
+    }
+
+    private JedisPoolConfig createPoolConfig(Properties info) {
+        JedisPoolConfig poolConfig = new JedisPoolConfig();
+        poolConfig.setMaxTotal(getMaxTotal(info));
+        poolConfig.setMaxIdle(getMaxIdle(info));
+        poolConfig.setMinIdle(getMinIdle(info));
+        poolConfig.setTestOnBorrow(true);
+        poolConfig.setTestOnReturn(true);
+        poolConfig.setTestWhileIdle(true);
+        poolConfig.setMinEvictableIdleTime(Duration.ofSeconds(60));
+        poolConfig.setTimeBetweenEvictionRuns(Duration.ofSeconds(30));
+        poolConfig.setNumTestsPerEvictionRun(3);
+        poolConfig.setBlockWhenExhausted(true);
+        return poolConfig;
+    }
+
+    // Helper methods to get configuration values
+    private String getPassword(Properties info) {
+        return info.getProperty("password");
+    }
+
+    private String getSentinelPassword(Properties info) {
+        return info.getProperty("sentinelPassword");
+    }
+
+    private String getClientName(Properties info) {
+        return info.getProperty("clientName");
+    }
+
+    private int getTimeout(Properties info) {
+        return Integer.parseInt(info.getProperty("timeout", "2000"));
+    }
+
+    private int getSentinelTimeout(Properties info) {
+        return Integer.parseInt(info.getProperty("sentinelTimeout", "2000"));
+    }
+
+    private int getMaxRetries(Properties info) {
+        return Integer.parseInt(info.getProperty("maxRetries", "3"));
+    }
+
+    private int getMaxTotal(Properties info) {
+        return Integer.parseInt(info.getProperty("maxTotal", "8"));
+    }
+
+    private int getMaxIdle(Properties info) {
+        return Integer.parseInt(info.getProperty("maxIdle", "8"));
+    }
+
+    private int getMinIdle(Properties info) {
+        return Integer.parseInt(info.getProperty("minIdle", "0"));
     }
 
     public Jedis getJedis() {
@@ -131,7 +212,12 @@ public class RedisConnection implements java.sql.Connection {
     @Override
     public void close() throws SQLException {
         if (!isClosed) {
-            jedis.close();
+            if (jedis != null) {
+                jedis.close();
+            }
+            if (sentinelPool != null) {
+                sentinelPool.close();
+            }
             isClosed = true;
         }
     }

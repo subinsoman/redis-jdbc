@@ -12,6 +12,14 @@
 - Enhanced SQL examples with transaction handling
 - Updated README with status badges and version information
 
+## Version 1.0.2 (2024-03-22)
+
+### Bug Fixes
+- Fixed authentication test to properly handle Redis authentication errors:
+  - Updated test to expect correct exception type (JedisDataException) for authentication failures
+  - Improved test cases for both authenticated and non-authenticated connections
+  - Enhanced error message clarity for authentication-related failures
+
 ## Version 1.0.0 (2024-03-21)
 
 ### Features

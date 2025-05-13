@@ -1,6 +1,6 @@
 # Redis JDBC Driver
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/subinsoman/redis-jdbc/releases/tag/v1.0.1)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/subinsoman/redis-jdbc/releases/tag/v1.0.2)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Java Version](https://img.shields.io/badge/java-%3E%3D8-orange.svg)](https://www.oracle.com/java/technologies/javase/javase-jdk8-downloads.html)
 
